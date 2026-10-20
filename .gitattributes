@@ -1,0 +1,2 @@
+# Model weights are large binary artifacts and must be stored through Git LFS.
+*.weights.h5 filter=lfs diff=lfs merge=lfs -text
