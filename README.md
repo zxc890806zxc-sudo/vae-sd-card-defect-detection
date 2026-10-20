@@ -11,7 +11,7 @@ This repository preserves a student project for image-based SD card printed-defe
 - Single-card and multi-region historical Python implementations.
 - Small, selected image samples for repository presentation only.
 - Selected historical result images and SSIM/error logs in the original source material.
-- One single-card weight file and four multi-region weight files, managed as Git LFS assets when this folder is committed.
+- Weight-file inventory and SHA-256 checksums; the actual large weight files are retained locally and pending Git LFS publication.
 
 ## What is not included
 
@@ -88,7 +88,7 @@ Important limitations:
 - No reproducible environment, dataset license, or end-to-end test suite was preserved.
 - Full datasets are excluded pending authorization.
 - The scripts contain duplicated implementations and Windows-relative path assumptions.
-- Weight files are included for preservation but have not been loaded and executed in this organized copy.
+- Weight files are retained locally and have not been loaded or executed in this organized copy; Git LFS publication remains pending.
 
 ## License
 
