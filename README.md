@@ -1,96 +1,146 @@
-# SD Card Printed-Defect Detection with VAE
+# iSD Viewer：以 VAE 進行 SD 卡印刷瑕疵檢測
 
-> 繁體中文：這是一份歷史專題整理版，保存以 VAE 與 SSIM 進行 SD 卡印刷瑕疵分析的程式、少量可展示影像與既有輸出。它不是重新訓練或已驗證可重現的發布版本。
+**iSD Viewer: VAE-Based Printing Defect Detection for SD Cards**
 
-## Project overview
+以變分自編碼器（Variational Autoencoder, VAE）重建 SD 卡表面影像，再用結構相似度（SSIM）與重建誤差比較原圖與重建圖，判斷 SD 卡印刷是否有瑕疵。本專案為國立高雄科技大學電子工程系的大學專題。
 
-This repository preserves a student project for image-based SD card printed-defect analysis. The implementation learns reconstructions from defect-free images with a Variational Autoencoder (VAE), then compares an input image and its reconstruction with reconstruction error and Structural Similarity Index (SSIM). Some scripts additionally identify candidate regions from difference images and evaluate local regions.
+[English summary](#english-summary)
 
-## What is included
+---
 
-- Single-card and multi-region historical Python implementations.
-- Small, selected image samples for repository presentation only.
-- Selected historical result images and SSIM/error logs in the original source material.
-- Weight-file inventory and SHA-256 checksums; the actual large weight files are retained locally and pending Git LFS publication.
+## 專案背景
 
-## What is not included
+SD 卡產線的印刷外觀多仰賴人工目檢，容易因視覺疲勞造成漏檢與重工。本專題嘗試以 AI 視覺檢測輔助判斷以下印刷瑕疵：
 
-- The full original image dataset.
-- Unselected result images, archives, installer files, unrelated coursework, travel records, or competition submissions.
-- Personal names, advisor information, partner-company information, and production-site details.
-- A claim that the included code has been reproduced in the current environment.
+- 顏色異常
+- 刮痕
+- 印刷偏移
+- 印刷缺漏（空白）
 
-## Method summary
+## 方法
 
-1. Convert an SD card image to grayscale and resize it to the script-specific input size.
-2. Apply image filtering used by the historical scripts.
-3. Reconstruct the image using a VAE trained on defect-free images.
-4. Compare original and reconstructed images with SSIM and reconstruction error.
-5. In the multi-region variants, inspect difference-image regions for a second local comparison.
+<p align="center">
+  <img src="docs/images/vae_architecture.png" alt="VAE 架構：輸入影像 → Encoder → 潛在向量 z → Decoder → 重建影像" width="720">
+</p>
 
-The primary scripts use 256 x 350 grayscale inputs and a latent dimension of 160. The exact behavior, thresholds, and preprocessing differ among historical script variants; see `docs/project-history.md` before choosing one.
+VAE 只用**無瑕疵**的影像訓練，因此它學會的是「正常 SD 卡長什麼樣子」。遇到有瑕疵的卡片時，重建結果會偏向正常外觀，原圖與重建圖之間的差異就會變大。
 
-## Repository layout
+<p align="center">
+  <img src="docs/images/pipeline_flowchart.png" alt="檢測流程圖" width="320">
+</p>
+
+1. **影像擷取**：在封閉環境搭配 LED 光源拍攝，減少外部光線干擾。
+2. **影像切割**：擷取 ROI、邊緣偵測，取出單張 SD 卡表面。
+3. **前處理**：OpenCV 縮放為 350 × 256、灰階化、高斯模糊與中值濾波、正規化。
+4. **VAE 重建**：Encoder / Decoder，潛在維度 160。
+5. **比對**：計算原圖與重建圖的 SSIM 與重建誤差；多區域版本會再針對差異圖中的局部區域（ROI）做第二次比對。
+6. **判定**：依門檻判定為瑕疵或正常。
+
+## 結果範例
+
+**瑕疵樣本**：差異圖（右）在印刷異常處明顯偏亮。
+
+![瑕疵樣本的原圖、重建圖與差異圖](results/examples/defect/defect_0.jpg)
+
+**無瑕疵樣本**：進一步切出各個印刷區域（ROI）逐一比對。
+
+<p align="center">
+  <img src="results/examples/defect_free/defect_0.jpg" alt="無瑕疵樣本的各區域比對結果" width="600">
+</p>
+
+### 報告中的實驗結果
+
+專題報告所使用的實驗資料集共 300 張影像，並模擬了 12 種瑕疵類型：
+
+| 分組 | 無瑕疵 | 有瑕疵 | 合計 |
+|---|---:|---:|---:|
+| 訓練 | 100 | 100 | 200 |
+| 測試 | 50 | 50 | 100 |
+| **合計** | **150** | **150** | **300** |
+
+- 報告中 100 張測試影像皆判定正確（瑕疵與無瑕疵的 recall 皆為 100%）。
+- 範例：瑕疵影像 SSIM = `0.5251`，無瑕疵影像 SSIM = `0.9182`。
+
+> 以上為專題報告在該測試集上的結果，不代表在其他產線、卡片型號或光源條件下也能達到相同表現。專題不同階段使用的程式與資料不同，數字也不完全相同。
+
+`results/ssim_logs/` 保留了單片版本最後一次批次執行的原始輸出（每行：檔名、SSIM、重建誤差），可作為參考。
+
+## 專案結構
 
 ```text
 src/
-  single_card/              # historical single-card training, batch, and camera scripts
-  multi_region/             # historical four-region scripts
-  multi_region_camera_v2/   # later top-level multi-region variant
-data/samples/               # selected presentation samples, not the full dataset
-results/examples/           # selected historical output images
-weights/                    # HDF5 weights, intended for Git LFS
-docs/                       # provenance, scope, and reproducibility notes
+  single_card/              # 單片：訓練、資料夾批次檢測、相機即時檢測
+  multi_region/             # 多區域（D1–D4 四個區域各一個模型）
+  multi_region_camera_v2/   # 多區域的後期版本（加入局部 ROI 比對）
+data/samples/               # 少量範例影像（非完整資料集）
+results/examples/           # 檢測結果圖
+results/ssim_logs/          # 批次檢測的 SSIM / 誤差記錄
+weights/                    # 權重說明（權重檔放在 GitHub Releases）
+docs/                       # 圖片與專案整理紀錄
 ```
 
-## Environment and dependencies
+每個資料夾都有三支程式：
 
-The original environment lockfile was not preserved. `requirements.txt` lists packages inferred from imports, without version pins. Create a clean Python environment and install them before attempting to run the scripts.
+| 程式 | 用途 |
+|---|---|
+| `training_model*.py` | 用無瑕疵影像訓練 VAE，輸出 `.weights.h5` |
+| `vae_folder*.py` | 讀取資料夾中的測試影像批次檢測，輸出結果圖與 `ssim_log.txt` |
+| `Camera + VAE*.py` | 接上相機即時拍攝並檢測 |
+
+## 環境安裝
+
+原始開發環境的套件版本沒有留下紀錄，`requirements.txt` 是依程式的 import 整理而成，沒有鎖定版本。
 
 ```bash
 python -m venv .venv
-.venv\\Scripts\\activate
+.venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-GPU, camera driver, TensorFlow version, and CUDA compatibility were not recorded. Camera scripts also require a compatible local camera and may use a Windows-specific capture backend.
+相機程式使用 Windows 的 DirectShow（`cv2.CAP_DSHOW`），相機編號可能需要依電腦調整。
 
-## Data and weights
+## 下載權重
 
-The `data/samples/` directory contains only small selected samples for illustration. It must not be treated as a training or evaluation dataset. See `data/README.md`.
+權重檔每個約 662 MB，放在本專案的 [Releases](https://github.com/zxc890806zxc-sudo/vae-sd-card-defect-detection/releases) 頁面。下載後放到要執行的程式**同一個資料夾**（程式用相對路徑讀取）：
 
-Weights are HDF5 files and are large. Git LFS is required after cloning:
+| 檔案 | 給哪個版本用 |
+|---|---|
+| `vae_model.weights.h5` | `src/single_card/` |
+| `vae_D1.weights.h5` ~ `vae_D4.weights.h5` | `src/multi_region/`、`src/multi_region_camera_v2/` |
 
-```bash
-git lfs install
-git lfs pull
-```
+檔案校驗碼（SHA-256）請見 [`weights/README.md`](weights/README.md)。
 
-See `weights/README.md` for file-to-script associations and SHA-256 checksums.
+## 執行方式
 
-## How to run
-
-This repository is a preservation release, not a verified reproducibility release. Start by reading the selected script and its expected current working directory:
+程式使用相對路徑讀取 `model-image/`（訓練影像）與 `test-image/`（測試影像），請先切換到程式所在資料夾，並依程式內的路徑準備影像：
 
 ```bash
-python "src/single_card/training_model.py"
-python "src/single_card/vae_folder.py"
+cd src/single_card
+python training_model.py      # 訓練（已下載權重可略過）
+python vae_folder.py          # 批次檢測 test-image 內的影像
 ```
 
-The scripts use relative paths such as `model-image`, `test-image`, and weight file names. They may require adapting paths or using the corresponding source layout. Such changes should be made in a new branch and documented; this preservation copy keeps the historical algorithm code unchanged.
+## 限制
 
-## Historical results and limitations
+- 完整資料集未公開，`data/samples/` 只有少量範例。
+- 程式保留專題當時的原貌，三個版本之間有重複的程式碼與寫死的相對路徑。
+- 未記錄 TensorFlow、CUDA 版本，在新環境執行可能需要調整。
 
-The original materials contain result images, SSIM/error logs, and multiple progress documents. Their reported metrics are historical records, not independently re-executed results for this repository. The preserved documents contain differing evaluation figures at different project stages, so this repository deliberately makes no accuracy, recall, speed, production-readiness, or generalization claim.
+## 專案資訊
 
-Important limitations:
+- **學校**：國立高雄科技大學 電子工程系
+- **發表**：第 23 屆離島資訊技術與應用研討會（ITAOI 2025）
+- **類型**：大學專題／電腦視覺
 
-- No reproducible environment, dataset license, or end-to-end test suite was preserved.
-- Full datasets are excluded pending authorization.
-- The scripts contain duplicated implementations and Windows-relative path assumptions.
-- Weight files are retained locally and have not been loaded or executed in this organized copy; Git LFS publication remains pending.
+---
 
-## License
+## English summary
 
-No license is supplied yet. Do not reuse, redistribute, or deploy the code, sample images, or weights beyond the repository access terms until the project owner confirms ownership and licensing conditions.
+An undergraduate project at National Kaohsiung University of Science and Technology (NKUST) for detecting printing defects on SD cards.
 
+- A **Variational Autoencoder** (latent dim 160, input 350 × 256 grayscale) is trained only on defect-free card images.
+- At inspection time, the input image is reconstructed and compared with the original using **SSIM** and reconstruction error. Multi-region variants additionally compare local regions (ROIs) found in the difference map.
+- The project report's test set (50 defect-free + 50 defective images) was reported as fully correctly classified. This is a result on that specific dataset, not a guarantee of production performance.
+- Three script variants are included: `single_card`, `multi_region` (one model per region D1–D4), and `multi_region_camera_v2`.
+- Model weights (~662 MB each) are available on the [Releases](https://github.com/zxc890806zxc-sudo/vae-sd-card-defect-detection/releases) page. Place them in the same folder as the script you run.
+- Presented at ITAOI 2025 (the 23rd Offshore Island Information Technology and Application Symposium).
