@@ -31,10 +31,12 @@ VAE 只用**無瑕疵**的影像訓練，因此它學會的是「正常 SD 卡�
 
 1. **影像擷取**：在封閉環境搭配 LED 光源拍攝，減少外部光線干擾。
 2. **影像切割**：擷取 ROI、邊緣偵測，取出單張 SD 卡表面。
-3. **前處理**：OpenCV 縮放為 350 × 256、灰階化、高斯模糊與中值濾波、正規化。
+3. **前處理**：OpenCV 縮放為 350 × 256、灰階化、高斯模糊（`GaussianBlur`）加雙邊濾波（`bilateralFilter`）、正規化。多區域版本的訓練程式另外加上中值濾波（`medianBlur`）。
 4. **VAE 重建**：Encoder / Decoder，潛在維度 160。
-5. **比對**：計算原圖與重建圖的 SSIM 與重建誤差；多區域版本會再針對差異圖中的局部區域（ROI）做第二次比對。
-6. **判定**：依門檻判定為瑕疵或正常。
+5. **兩階段比對**：
+   - 第一階段（全域）：計算整張影像與重建圖的 SSIM 與重建誤差。
+   - 第二階段（局部）：當全域數值落在邊界附近時，從差異圖找出可疑區塊（ROI），針對每個區塊再算一次 SSIM。
+6. **判定**：以 SSIM 門檻 0.83 為主。多區域版本的最終規則是 SSIM ≥ 0.83 且重建誤差 ≤ 0.02 才判定為正常，其餘判定為瑕疵。各版本的第一階段門檻略有不同，以程式內的數值為準。
 
 ## 結果範例
 
@@ -50,18 +52,27 @@ VAE 只用**無瑕疵**的影像訓練，因此它學會的是「正常 SD 卡�
 
 ### 報告中的實驗結果
 
-專題報告所使用的實驗資料集共 300 張影像，並模擬了 12 種瑕疵類型：
+> **VAE 只用無瑕疵影像訓練。** 下面「有瑕疵」的樣本不參與 VAE 訓練，只用來觀察 SSIM 分佈、決定判定門檻，以及最後的測試。
+
+**期末成果報告（2025 年 11 月，對應本 repo 目前的程式）**
+
+- 共使用 480 張樣本（含門檻校準與測試）。
+- 獨立測試集：無瑕疵 120 張、有瑕疵 120 張，瑕疵類型包含異色、刮痕、歪斜、留白。
+- 依 SSIM 分佈訂出門檻 **0.83**，測試集上 Recall 與真陰率（TN rate）皆為 **100%**。
+- 最終成果為一次可辨識 12 片 SD 卡的檢測模組（多區域版本）。
+
+**ITAOI 2025 研討會論文（2025 年 4 月，較早的版本）**
 
 | 分組 | 無瑕疵 | 有瑕疵 | 合計 |
 |---|---:|---:|---:|
-| 訓練 | 100 | 100 | 200 |
+| 門檻校準 | 100 | 100 | 200 |
 | 測試 | 50 | 50 | 100 |
 | **合計** | **150** | **150** | **300** |
 
-- 報告中 100 張測試影像皆判定正確（瑕疵與無瑕疵的 recall 皆為 100%）。
+- 共模擬 12 種瑕疵類型，100 張測試影像皆判定正確。
 - 範例：瑕疵影像 SSIM = `0.5251`，無瑕疵影像 SSIM = `0.9182`。
 
-> 以上為專題報告在該測試集上的結果，不代表在其他產線、卡片型號或光源條件下也能達到相同表現。專題不同階段使用的程式與資料不同，數字也不完全相同。
+> 以上為專題報告在各自測試集上的結果，不代表在其他產線、卡片型號或光源條件下也能達到相同表現。
 
 `results/ssim_logs/` 保留了單片版本最後一次批次執行的原始輸出（每行：檔名、SSIM、重建誤差），可作為參考。
 
@@ -112,13 +123,35 @@ pip install -r requirements.txt
 
 ## 執行方式
 
-程式使用相對路徑讀取 `model-image/`（訓練影像）與 `test-image/`（測試影像），請先切換到程式所在資料夾，並依程式內的路徑準備影像：
+程式用**目前所在的資料夾**當基準，讀取這些相對路徑：
 
-```bash
-cd src/single_card
-python training_model.py      # 訓練（已下載權重可略過）
-python vae_folder.py          # 批次檢測 test-image 內的影像
+| 路徑 | 內容 |
+|---|---|
+| `model-image/` | 訓練用的無瑕疵影像（多區域版本：`model-image/D1` ~ `D4`） |
+| `test-image/defect/`、`test-image/defect-free/` | 測試影像（多區域版本：底下再分 `D1` ~ `D4`） |
+| `*.weights.h5` | 權重檔 |
+| `result/` | 程式自動建立，輸出結果圖與 `ssim_log.txt` |
+
+`data/samples/` 已經按照這個結構放好範例圖，切換到那個資料夾就能直接執行（Windows）：
+
+**單片版本**
+
+```powershell
+cd data\samples\single_card
+# 先把 Releases 下載的 vae_model.weights.h5 放到這個資料夾
+python ..\..\..\src\single_card\vae_folder.py      # 批次檢測，結果輸出到 result\
+python ..\..\..\src\single_card\training_model.py  # （選用）用範例圖重新訓練，會覆蓋權重檔
 ```
+
+**多區域版本**
+
+```powershell
+cd data\samples\multi_region
+# 先把 vae_D1 ~ vae_D4.weights.h5 放到這個資料夾
+python ..\..\..\src\multi_region\vae_folder_12.py
+```
+
+範例圖每類只有 3～4 張，只夠確認程式能跑；要重新訓練出可用的模型，需要準備完整的資料集。
 
 ## 限制
 
@@ -129,7 +162,7 @@ python vae_folder.py          # 批次檢測 test-image 內的影像
 ## 專案資訊
 
 - **學校**：國立高雄科技大學 電子工程系
-- **發表**：第 23 屆離島資訊技術與應用研討會（ITAOI 2025）
+- **發表**：ITAOI 2025 離島資訊技術與應用研討會
 - **類型**：大學專題／電腦視覺
 
 ---
@@ -140,7 +173,9 @@ An undergraduate project at National Kaohsiung University of Science and Technol
 
 - A **Variational Autoencoder** (latent dim 160, input 350 × 256 grayscale) is trained only on defect-free card images.
 - At inspection time, the input image is reconstructed and compared with the original using **SSIM** and reconstruction error. Multi-region variants additionally compare local regions (ROIs) found in the difference map.
-- The project report's test set (50 defect-free + 50 defective images) was reported as fully correctly classified. This is a result on that specific dataset, not a guarantee of production performance.
+- Defective images are never used to train the VAE; they are only used to choose the SSIM threshold (0.83) and for testing.
+- In the final project report, an independent test set of 120 defect-free and 120 defective images reached 100% recall and 100% true-negative rate. This is a result on that specific dataset, not a guarantee of production performance.
+- `data/samples/` follows the folder layout the scripts expect, so you can `cd` into it and run a script directly (see "執行方式").
 - Three script variants are included: `single_card`, `multi_region` (one model per region D1–D4), and `multi_region_camera_v2`.
 - Model weights (~662 MB each) are available on the [Releases](https://github.com/zxc890806zxc-sudo/vae-sd-card-defect-detection/releases) page. Place them in the same folder as the script you run.
-- Presented at ITAOI 2025 (the 23rd Offshore Island Information Technology and Application Symposium).
+- Presented at ITAOI 2025 (Offshore Island Information Technology and Application Symposium).
